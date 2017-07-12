@@ -5,26 +5,37 @@ String launchIntegrationTests = "yes"
 String pimVersion = "1.7"
 def supportedPhpVersions = ["5.6", "7.0", "7.1"]
 
-def clientConfig = [
-    "php-http/guzzle6-adapter": ["phpVersion": supportedPhpVersions, "psrImplem": ["guzzlehttp/psr7"]],
-    "php-http/guzzle5-adapter": ["phpVersion": supportedPhpVersions, "psrImplem": ["guzzlehttp/psr7", "zendframework/zend-diactoros", "slim/slim"]],
-    "php-http/curl-client": ["phpVersion": supportedPhpVersions, "psrImplem": ["guzzlehttp/psr7", "zendframework/zend-diactoros", "slim/slim"]]
+def clients = [
+    "php-http/guzzle6-adapter",
+    "php-http/guzzle5-adapter",
+    "php-http/curl-client"
 ]
-
-def clients = clientConfig.keySet() as String[];
 
 stage("Checkout") {
     milestone 1
     if (env.BRANCH_NAME =~ /^PR-/) {
         userInput = input(message: 'Launch tests?', parameters: [
+            choice(choices: '1.7\nmaster', description: 'PIM edition the tests should run on', name: 'requiredPimVersion'),
             choice(choices: 'yes\nno', description: 'Run unit tests and code style checks', name: 'launchUnitTests'),
             choice(choices: 'yes\nno', description: 'Run integration tests', name: 'launchIntegrationTests'),
             string(defaultValue: clients.join(','), description: 'Clients used to run integration tests (comma separated values)', name: 'clients'),
         ])
 
+        pimVersion = userInput['requiredPimVersion']
+
+        if (pimVersion.equals("master")) {
+            supportedPhpVersions = ["7.1"]
+        }
+
         launchUnitTests = userInput['launchUnitTests']
         launchIntegrationTests = userInput['launchIntegrationTests']
         clients = userInput['clients'].tokenize(',')
+
+        clientConfig = [
+            "php-http/guzzle6-adapter": ["phpVersion": supportedPhpVersions, "psrImplem": ["guzzlehttp/psr7"]],
+            "php-http/guzzle5-adapter": ["phpVersion": supportedPhpVersions, "psrImplem": ["guzzlehttp/psr7", "zendframework/zend-diactoros", "slim/slim"]],
+            "php-http/curl-client": ["phpVersion": supportedPhpVersions, "psrImplem": ["guzzlehttp/psr7", "zendframework/zend-diactoros", "slim/slim"]]
+        ]
     }
     milestone 2
 
@@ -58,7 +69,11 @@ stage("Checkout") {
     }
 
     if (launchIntegrationTests.equals("yes")) {
-        checkouts["pim_community_dev_${pimVersion}"] = {runCheckoutPim("5.6", pimVersion)};
+        if(pimVersion.equals("master")){
+            checkouts["pim_community_dev_${pimVersion}"] = {runCheckoutPim("7.1", pimVersion)};
+        } else {
+            checkouts["pim_community_dev_${pimVersion}"] = {runCheckoutPim("5.6", pimVersion)};
+        }
 
         for (client in clients) {
             for (phpVersion in clientConfig.get(client).get("phpVersion")) {
@@ -260,7 +275,13 @@ void runIntegrationTest(String phpVersion, String client, String psrImplem, Stri
 
             dir('pim') {
                 unstash "pim_community_dev_${pimVersion}"
-                sh "docker run --name akeneo-pim --link mysql:mysql -v \$(pwd):/home/docker/pim -d carcel/akeneo-apache:php-5.6"
+
+                if(pimVersion.equals("master")){
+                    sh "docker run --name akeneo-pim --link mysql:mysql -v \$(pwd):/home/docker/pim -d akeneo/fpm:php-7.1"
+                } else {
+                    sh "docker run --name akeneo-pim --link mysql:mysql -v \$(pwd):/home/docker/pim -d carcel/akeneo-apache:php-5.6"
+                }
+
                 sh "docker exec akeneo-pim pim/app/console pim:install -e prod"
             }
 
